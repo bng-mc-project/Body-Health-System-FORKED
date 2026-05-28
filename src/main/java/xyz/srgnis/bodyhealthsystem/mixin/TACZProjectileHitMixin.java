@@ -2,7 +2,6 @@ package xyz.srgnis.bodyhealthsystem.mixin;
 
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.player.PlayerEntity;
-import net.minecraft.entity.projectile.PersistentProjectileEntity;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.text.Text;
 import net.minecraft.util.hit.EntityHitResult;
@@ -13,21 +12,31 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import xyz.srgnis.bodyhealthsystem.util.ProjectileHitTracker;
-import net.minecraft.util.hit.HitResult;   
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
+import net.minecraft.util.hit.HitResult;
 
-@Mixin(PersistentProjectileEntity.class)
-public class ProjectileHitMixin {
-    private static final double ARM_X_THRESHOLD = 0.80; 
+/**
+ * TACZ Compatibility Mixin
+ * Handles projectile hits from TACZ (Timeless and Classics Zero) mod.
+ * This mixin targets common TACZ projectile classes to ensure proper body part hit detection.
+ */
+@Mixin(targets = {
+    "com/hawn/journeys/guns/entity/KineticBulletEntity",
+    "com/hawn/journeys/guns/entity/ModernKineticBulletEntity",
+    "com/hawn/journeys/guns/entity/ExplosiveBulletEntity"
+}, remap = false)
+public class TACZProjectileHitMixin {
+    private static final double ARM_X_THRESHOLD = 0.80;
 
-    @Inject(method = "onEntityHit", at = @At("HEAD"))
-    private void bhs$recordHit(EntityHitResult entityHitResult, CallbackInfo ci) {
+    @Inject(method = "onEntityHit", at = @At("HEAD"), remap = true, require = 0)
+    private void bhs$recordTACZHit(EntityHitResult entityHitResult, CallbackInfo ci) {
         Entity self = (Entity)(Object)this;
         if (entityHitResult == null) return;
         Entity hitEntity = entityHitResult.getEntity();
         if (!(hitEntity instanceof PlayerEntity player)) return;
         if (player.getWorld().isClient) return;
 
-        // --- Build candidate hit position ---
+        // --- Build candidate hit position (same logic as ProjectileHitMixin) ---
         Vec3d hitPos = entityHitResult.getPos();
         Vec3d projPos = self.getPos();
         Box box = player.getBoundingBox();
@@ -75,34 +84,6 @@ public class ProjectileHitMixin {
         double zNorm = clamp(localZ / halfWidth, -1.0, 1.0);
 
         ProjectileHitTracker.record(player, xNorm, yNorm, zNorm);
-
-      //  String bodyPart = classifyBodyPart(xNorm, yNorm);
-       // if (player instanceof ServerPlayerEntity serverPlayer) {
-           // serverPlayer.sendMessage(Text.literal(String.format(
-               // "BHS-hit x=%.3f y=%.3f z=%.3f -> %s | best=(%.2f,%.2f,%.2f) offset=(%.3f,%.3f,%.3f) yaw=%.1f",
-              //  xNorm, yNorm, zNorm, bodyPart,
-              //  best.x, best.y, best.z,
-              //  offset.x, offset.y, offset.z,
-               // player.getBodyYaw()
-           // )), false);
-        //}
-        
-        // TACZ compatibility: also handle ModernKineticBulletEntity and similar projectile types
-        // TACZ bullets may not extend PersistentProjectileEntity, so we record hits here for any projectile
-        // The DamageTypeTags.IS_PROJECTILE check in PlayerBody ensures proper routing
-    }
-
-    private static String classifyBodyPart(double xNorm, double yNorm) {
-        String side = "";
-        if (xNorm < -0.25) side = "Right ";
-        else if (xNorm > 0.25) side = "Left ";
-        if (yNorm < 0.18) return side + "Foot";
-        if (yNorm < 0.50) return side + "Leg";
-        if (yNorm < 0.88) {
-            if (yNorm >= 0.60 && Math.abs(xNorm) > ARM_X_THRESHOLD) return side + "Arm";
-            return "Torso";
-        }
-        return side + "Head";
     }
 
     private static double horizontalDistance(Vec3d v, double cx, double cz) {

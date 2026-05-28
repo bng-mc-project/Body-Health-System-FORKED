@@ -15,6 +15,7 @@
     "OnTryUseTotemMixin",
     "CrawlEyeHeightMixin",
     "ProjectileHitMixin",
+    "TACZProjectileHitMixin",
     "PreventJumpWhenDownedMixin",
     "OnDeathMixin",
     "ForcePoseMixin",

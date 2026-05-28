@@ -65,8 +65,9 @@ public class PlayerBody extends Body {
             applyDamageLocal(Config.drowningDamage, source, this.getPart(TORSO));
         } else if (source.isOf(DamageTypes.FLY_INTO_WALL) || source.isOf(DamageTypes.FALLING_ANVIL) || source.isOf(DamageTypes.FALLING_BLOCK) || source.isOf(DamageTypes.FALLING_STALACTITE)) {
             applyDamageLocal(amount, source, this.getPart(HEAD));
-        } else if (source.isOf(DamageTypes.ARROW) || source.isOf(DamageTypes.MOB_PROJECTILE) || source.isOf(DamageTypes.TRIDENT) || source.getSource() instanceof net.minecraft.entity.projectile.PersistentProjectileEntity) {
+        } else if (source.isOf(DamageTypes.ARROW) || source.isOf(DamageTypes.MOB_PROJECTILE) || source.isOf(DamageTypes.TRIDENT) || source.getSource() instanceof net.minecraft.entity.projectile.PersistentProjectileEntity || source.isIn(DamageTypeTags.IS_PROJECTILE)) {
             // Route projectile damage to the part indicated by the most recent hit
+            // This includes vanilla projectiles and modded projectiles like TACZ bullets
             Vec3d norm = ProjectileHitTracker.getLastHit((PlayerEntity) entity);
             BodyPart part = selectPartFromNormalized(norm);
             if (part != null) {
