@@ -6,6 +6,7 @@
 *.out
 build/
 target/
+run/
 
 # Dependencies
 .gradle/
