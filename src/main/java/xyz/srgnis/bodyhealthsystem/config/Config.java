@@ -77,6 +77,10 @@ public class Config extends MidnightConfig {
     // Master toggle for wounds/tourniquets/necrosis/bleeding
     @Entry public static boolean enableWoundingSystem = true;
 
+    @Comment(centered = true) public static Comment comment_debug;
+    // Logs projectile hit detection decisions (part, hitPos, fallback, ignored limb)
+    @Entry public static boolean debugProjectileHitboxes = false;
+
     @Comment(centered = true) public static Comment comment_tempDisplay;
     @Entry public static TemperatureUnit temperatureUnit = TemperatureUnit.CELSIUS;
 

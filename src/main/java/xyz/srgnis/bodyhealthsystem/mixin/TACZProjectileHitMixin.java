@@ -2,22 +2,28 @@ package xyz.srgnis.bodyhealthsystem.mixin;
 
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.player.PlayerEntity;
+import net.minecraft.util.Identifier;
 import net.minecraft.util.hit.EntityHitResult;
-import net.minecraft.util.math.Box;
 import net.minecraft.util.math.Vec3d;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Pseudo;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+import xyz.srgnis.bodyhealthsystem.BHSMain;
+import xyz.srgnis.bodyhealthsystem.util.BodyHitboxes;
 import xyz.srgnis.bodyhealthsystem.util.ProjectileHitTracker;
 
 /**
  * TACZ compatibility mixin for TaCZ: Refabricated projectile hit detection.
+ *
+ * TACZ's onHitEntity passes the TacHitResult which wraps an EntityHitResult.
+ * We use the startVec/endVec (bullet trajectory) for our own hitbox detection.
  */
 @Pseudo
 @Mixin(targets = "com.tacz.guns.entity.EntityKineticBullet", remap = false)
 public class TACZProjectileHitMixin {
+
     @Inject(
         method = "onHitEntity(Lcom/tacz/guns/util/TacHitResult;Lnet/minecraft/util/math/Vec3d;Lnet/minecraft/util/math/Vec3d;)V",
         at = @At("HEAD"),
@@ -25,67 +31,48 @@ public class TACZProjectileHitMixin {
         remap = false
     )
     private void bhs$recordTACZHit(Object result, Vec3d startVec, Vec3d endVec, CallbackInfo ci) {
-        if (!(result instanceof EntityHitResult entityHitResult)) return;
-        Entity hitEntity = entityHitResult.getEntity();
+        if (startVec == null || endVec == null) return;
+        
+        // Extract the hit entity from TacHitResult via reflection
+        Entity hitEntity = null;
+        try {
+            java.lang.reflect.Method getEntityMethod = result.getClass().getMethod("getEntity");
+            Object entityObj = getEntityMethod.invoke(result);
+            if (entityObj instanceof Entity) {
+                hitEntity = (Entity) entityObj;
+            }
+        } catch (Exception e) {
+            BHSMain.LOGGER.warn("[BHS][TACZ] Could not extract entity from TacHitResult: {}", e.getMessage());
+            return;
+        }
+        
         if (!(hitEntity instanceof PlayerEntity player)) return;
         if (player.getWorld().isClient) return;
 
-        Entity self = (Entity) (Object) this;
+        // Use the bullet trajectory (startVec -> endVec) to determine hit body part
+        // endVec is the collision position from EntityHitResult
+        Vec3d from = startVec;
+        Vec3d to = endVec;
+        if (to == null) to = from;
 
-        Vec3d hitPos = entityHitResult.getPos();
-        Vec3d projPos = self.getPos();
-        Box box = player.getBoundingBox();
-
-        double centerX = (box.minX + box.maxX) * 0.5;
-        double centerZ = (box.minZ + box.maxZ) * 0.5;
-
-        double distHit = horizontalDistance(hitPos, centerX, centerZ);
-        double distProj = horizontalDistance(projPos, centerX, centerZ);
-
-        Vec3d best = (distProj > distHit) ? projPos : hitPos;
-
-        double py = clamp(best.y, box.minY, box.maxY);
-        Vec3d adjustedHit = new Vec3d(best.x, py, best.z);
-
-        Vec3d origin = new Vec3d(centerX, py, centerZ);
-        Vec3d offset = adjustedHit.subtract(origin);
-
-        double height = Math.max(box.maxY - box.minY, 1.0E-3);
-        double halfWidth = Math.max(player.getWidth() * 0.5, 1.0E-3);
-
-        double yawRad = Math.toRadians(player.getBodyYaw());
-        Vec3d forward = new Vec3d(-Math.sin(yawRad), 0.0, Math.cos(yawRad)).normalize();
-        Vec3d right = new Vec3d(forward.z, 0.0, -forward.x).normalize();
-
-        double localX = offset.dotProduct(right);
-        double localZ = offset.dotProduct(forward);
-
-        double xNorm = clamp(localX / halfWidth, -1.0, 1.0);
-
-        double yRaw = clamp((py - box.minY) / height, 0.0, 1.0);
-        double headStart = clamp((player.getEyeY() - box.minY) / height, 0.0, 1.0);
-        headStart = Math.min(headStart, 0.99);
-        final double HEAD_BAND_START = 0.88;
-        double yNorm;
-        if (yRaw <= headStart) {
-            yNorm = (headStart > 1.0E-6) ? (yRaw / headStart) * HEAD_BAND_START : 0.0;
-        } else {
-            yNorm = HEAD_BAND_START + ((yRaw - headStart) / (1.0 - headStart)) * (1.0 - HEAD_BAND_START);
+        Identifier part = BodyHitboxes.pickAtPoint(player, to);
+        boolean fallbackUsed = false;
+        if (part == null) {
+            fallbackUsed = true;
+            part = BodyHitboxes.pick(player, from, to);
         }
-        yNorm = clamp(yNorm, 0.0, 1.0);
+        if (part != null) {
+            ProjectileHitTracker.recordPart(player, part);
+        }
 
-        double zNorm = clamp(localZ / halfWidth, -1.0, 1.0);
-
-        ProjectileHitTracker.record(player, xNorm, yNorm, zNorm);
-    }
-
-    private static double horizontalDistance(Vec3d v, double cx, double cz) {
-        double dx = v.x - cx;
-        double dz = v.z - cz;
-        return Math.sqrt(dx * dx + dz * dz);
-    }
-
-    private static double clamp(double v, double min, double max) {
-        return Math.max(min, Math.min(max, v));
+        BHSMain.LOGGER.info(
+                "[BHS][ProjectileHit] type=tacz target={} hitPos=({},{},{}) start=({},{},{}) end=({},{},{}) part={} fallback={}",
+                player.getName().getString(),
+                String.format("%.3f", to.x), String.format("%.3f", to.y), String.format("%.3f", to.z),
+                String.format("%.3f", from.x), String.format("%.3f", from.y), String.format("%.3f", from.z),
+                String.format("%.3f", to.x), String.format("%.3f", to.y), String.format("%.3f", to.z),
+                part != null ? part.toString() : "null",
+                fallbackUsed
+        );
     }
 }
