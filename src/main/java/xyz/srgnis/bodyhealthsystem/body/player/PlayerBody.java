@@ -8,6 +8,7 @@ import net.minecraft.entity.damage.DamageTypes;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.item.ArmorItem;
 import net.minecraft.registry.tag.DamageTypeTags;
+import net.minecraft.util.Identifier;
 import net.minecraft.util.math.Vec3d;
 import xyz.srgnis.bodyhealthsystem.BHSMain;
 import xyz.srgnis.bodyhealthsystem.body.Body;
@@ -101,63 +102,58 @@ public class PlayerBody extends Body {
             applyDamageLocal(amount, source, this.getPart(HEAD));
         } else {
             PlayerEntity player = (PlayerEntity) entity;
+            Identifier taczPart = null;
 
             // --- TACZ bullet detection ---
             if (isTACZ) {
-                net.minecraft.util.Identifier hitPart = ProjectileHitTracker.consumeRecentPart(player, 10);
-                boolean fromMixin = (hitPart != null);
-                if (hitPart == null) {
-                    // The bullet entity velocity is zero after impact.
-                    // Use the attacker (shooter) eye position for correct ray direction.
+                taczPart = ProjectileHitTracker.peekRecentPart(player, 10);
+                boolean fromMixin = (taczPart != null);
+                if (taczPart == null) {
                     net.minecraft.entity.Entity src = source.getSource();
                     net.minecraft.entity.Entity attacker = source.getAttacker();
                     if (src != null && attacker != null) {
                         Vec3d from = attacker.getEyePos();
                         Vec3d to = src.getPos();
-                        // Do not allow negative or zero-length ray
                         if (from.squaredDistanceTo(to) > 0.01) {
-                            hitPart = xyz.srgnis.bodyhealthsystem.util.BodyHitboxes.pick(player, from, to);
+                            taczPart = xyz.srgnis.bodyhealthsystem.util.BodyHitboxes.pick(player, from, to);
                         }
-                        // Fallback: also try the bullet position point-based detection
-                        if (hitPart == null) {
-                            hitPart = xyz.srgnis.bodyhealthsystem.util.BodyHitboxes.pickAtPoint(player, to);
+                        if (taczPart == null) {
+                            taczPart = xyz.srgnis.bodyhealthsystem.util.BodyHitboxes.pickAtPoint(player, to);
                         }
                     }
                 }
-                if (hitPart != null) {
-                    ProjectileHitTracker.recordPart(player, hitPart);
+                if (taczPart != null) {
+                    ProjectileHitTracker.recordPart(player, taczPart);
                 }
                 BHSMain.LOGGER.info("[BHS][TACZ] target={} part={} fromMixin={} damage={}",
                         player.getName().getString(),
-                        hitPart != null ? hitPart.toString() : "null",
+                        taczPart != null ? taczPart.toString() : "null",
                         fromMixin,
                         String.format("%.3f", amount));
             }
 
-            // Use a very short-lived recorded hit if available, even for custom damage types.
-            net.minecraft.util.Identifier partId = ProjectileHitTracker.consumeRecentPart(player, 3);
+            Identifier partId = (isTACZ && taczPart != null)
+                    ? taczPart
+                    : ProjectileHitTracker.consumeRecentPart(player, 3);
             BodyPart part = (partId != null) ? getPart(partId) : null;
             if (part != null) {
-                net.minecraft.util.Identifier originalPartId = part.getIdentifier();
-
                 // If a limb is already destroyed, further hits to it are ignored.
                 if (isLimbPart(part.getIdentifier()) && part.getHealth() <= 0.0f) {
                     BHSMain.LOGGER.info("[BHS][ProjectileDamage] target={} part={} IGNORED (destroyed limb) damage={}",
                             player.getName().getString(), part.getIdentifier(), String.format("%.3f", amount));
+                    if (isTACZ && bhs$isTaczFollowUpDamage(source)) {
+                        ProjectileHitTracker.clearPart(player);
+                    }
                     return;
                 }
 
-                // Head-hit mitigation: 40% chance to redirect to torso
-                if (part.getIdentifier().equals(HEAD)) {
-                    var torso = getPart(TORSO);
-                    if (torso != null && entity.getRandom().nextDouble() < 0.40) {
-                        part = torso;
-                    }
-                }
                 applyDamageLocal(amount, source, part);
                 if (bhs$canApplyWoundsFor(source, true)) applyWoundChances(part, true);
-                BHSMain.LOGGER.info("[BHS][ProjectileDamage] target={} hitPart={} finalPart={} damage={}",
-                        player.getName().getString(), originalPartId, part.getIdentifier(), String.format("%.3f", amount));
+                BHSMain.LOGGER.info("[BHS][ProjectileDamage] target={} part={} damage={}",
+                        player.getName().getString(), part.getIdentifier(), String.format("%.3f", amount));
+                if (isTACZ && bhs$isTaczFollowUpDamage(source)) {
+                    ProjectileHitTracker.clearPart(player);
+                }
             } else if (isTACZ
                     || source.isOf(DamageTypes.ARROW)
                     || source.isOf(DamageTypes.MOB_PROJECTILE)
@@ -188,6 +184,14 @@ public class PlayerBody extends Body {
                 || RIGHT_LEG.equals(id)
                 || LEFT_FOOT.equals(id)
                 || RIGHT_FOOT.equals(id);
+    }
+
+    /** TACZ applies armor-piercing damage as a second hit right after the normal bullet hit. */
+    private static boolean bhs$isTaczFollowUpDamage(DamageSource source) {
+        return source.getTypeRegistryEntry().getKey()
+                .map(k -> "tacz".equals(k.getValue().getNamespace())
+                        && k.getValue().getPath().contains("ignore_armor"))
+                .orElse(false);
     }
 
     private boolean bhs$canApplyWoundsFor(DamageSource source, boolean projectile) {

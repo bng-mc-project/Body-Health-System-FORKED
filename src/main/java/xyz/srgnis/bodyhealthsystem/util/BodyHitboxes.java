@@ -1,6 +1,6 @@
 package xyz.srgnis.bodyhealthsystem.util;
 
-import net.minecraft.entity.player.PlayerEntity;
+import net.minecraft.entity.LivingEntity;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.math.Box;
 import net.minecraft.util.math.Vec3d;
@@ -13,76 +13,181 @@ import java.util.Map;
  * Builds axis-aligned hitboxes for each named body part based on
  * the player's current bounding box and eye height.
  *
- * Layout (all Y values relative to box.minY, height = box.maxY - box.minY):
+ * Layout (Y relative to box.minY, height = box.maxY - box.minY):
  *
- *   HEAD     : top 12% of height              (eyeY..top)
- *   TORSO    : 45%–88% of height, centre 60%  (upper body minus arms)
- *   L/R ARM  : 50%–88% of height, outer 40%   (lateral strips)
- *   L/R LEG  : 18%–50% of height              (split down centre in player-local X)
- *   L/R FOOT : bottom 18%                     (split down centre in player-local X)
+ *   HEAD     : neckY .. top          (no overlap with torso)
+ *   TORSO    : 50% .. neckY          (centre 60% width)
+ *   L/R ARM  : 50% .. neckY          (outer 40% lateral)
+ *   L/R LEG  : 18% .. 50%
+ *   L/R FOOT : bottom 18%
  *
- * "Left" and "Right" are from the player's own perspective.
- * In world-space the split axis is perpendicular to the player's facing direction.
+ * neckY is derived from {@link LivingEntity#getEyeY()} with a floor at 78% height
+ * so face hits are not classified as torso.
  */
 public final class BodyHitboxes {
 
     private BodyHitboxes() {}
 
+    /** Tiny gap so torso/arm and head AABBs never share a face. */
+    private static final double BOX_GAP = 1.0E-4;
+
+    private record Layout(
+            double footTop,
+            double legTop,
+            double neckY,
+            double minX, double minY, double minZ,
+            double maxX, double maxY, double maxZ,
+            double cx, double cz,
+            double halfW
+    ) {
+        static Layout of(LivingEntity entity) {
+            Box full = entity.getBoundingBox();
+            double minX = full.minX;
+            double minY = full.minY;
+            double minZ = full.minZ;
+            double maxX = full.maxX;
+            double maxY = full.maxY;
+            double maxZ = full.maxZ;
+
+            double height = maxY - minY;
+            double cx = (minX + maxX) * 0.5;
+            double cz = (minZ + maxZ) * 0.5;
+            double halfW = (maxX - minX) * 0.5;
+
+            double footTop = minY + height * 0.18;
+            double legTop = minY + height * 0.50;
+
+            // Neck line: below eyes, but at least 78% up the body (face is not the top 12%).
+            double neckFromEyes = entity.getEyeY() - height * 0.10;
+            double neckFromFrac = minY + height * 0.78;
+            double neckY = Math.max(neckFromEyes, neckFromFrac);
+            neckY = Math.max(neckY, legTop + 0.05);
+            neckY = Math.min(neckY, maxY - height * 0.06);
+
+            return new Layout(footTop, legTop, neckY, minX, minY, minZ, maxX, maxY, maxZ, cx, cz, halfW);
+        }
+
+        double torsoTop() {
+            return neckY - BOX_GAP;
+        }
+
+        double armTop() {
+            return neckY - BOX_GAP;
+        }
+
+        boolean isHeadY(double y) {
+            return y >= neckY;
+        }
+    }
+
     /**
      * Returns an ordered map of body-part identifier → world-space AABB.
      * Iteration order is HEAD first so that the head box is tried before torso.
      */
-    public static Map<Identifier, Box> build(PlayerEntity player) {
-        Box full = player.getBoundingBox();
-        double minX = full.minX;
-        double minY = full.minY;
-        double minZ = full.minZ;
-        double maxX = full.maxX;
-        double maxY = full.maxY;
-        double maxZ = full.maxZ;
+    public static Map<Identifier, Box> build(LivingEntity entity) {
+        Layout layout = Layout.of(entity);
 
-        double height = maxY - minY;
-        double cx = (minX + maxX) * 0.5;
-        double cz = (minZ + maxZ) * 0.5;
-
-        // Y thresholds (absolute)
-        double footTop  = minY + height * 0.18;
-        double legTop   = minY + height * 0.50;
-        double armStart = minY + height * 0.50;
-        double armTop   = minY + height * 0.88;
-        double torsoTop = minY + height * 0.88;
-        double headBot  = minY + height * 0.88;
-
-        double halfW = (maxX - minX) * 0.5;
-
-        // All limb AABB boxes cover the full player XZ width.
-        // Left/right distinction is resolved by dot-product in resolveSide(), not by AABB geometry.
         Map<Identifier, Box> boxes = new LinkedHashMap<>();
 
-        // HEAD (full width)
-        boxes.put(PlayerBodyParts.HEAD,  new Box(minX, headBot, minZ, maxX, maxY, maxZ));
+        // HEAD — full width, strictly above torso/arm band
+        boxes.put(PlayerBodyParts.HEAD, new Box(
+                layout.minX, layout.neckY, layout.minZ,
+                layout.maxX, layout.maxY, layout.maxZ));
 
-        // TORSO: narrow the X/Z box to inner 60% so arms are preferred at the edges
-        double torsoInset = halfW * 0.40;
-        // Approximate centre strip in world space by shrinking the box
-        // (not rotation-aware, but good enough for a hit-test since arms are checked first)
-        boxes.put(PlayerBodyParts.TORSO,
-                new Box(cx - (halfW - torsoInset), legTop, cz - (halfW - torsoInset),
-                        cx + (halfW - torsoInset), torsoTop, cz + (halfW - torsoInset)));
+        double torsoInset = layout.halfW * 0.40;
+        boxes.put(PlayerBodyParts.TORSO, new Box(
+                layout.cx - (layout.halfW - torsoInset), layout.legTop, layout.cz - (layout.halfW - torsoInset),
+                layout.cx + (layout.halfW - torsoInset), layout.torsoTop(), layout.cz + (layout.halfW - torsoInset)));
 
-        // ARMS — full-width boxes for the arm Y band (left/right resolved later)
-        boxes.put(PlayerBodyParts.LEFT_ARM,  new Box(minX, armStart, minZ, maxX, armTop, maxZ));
-        boxes.put(PlayerBodyParts.RIGHT_ARM, new Box(minX, armStart, minZ, maxX, armTop, maxZ));
+        boxes.put(PlayerBodyParts.LEFT_ARM, new Box(
+                layout.minX, layout.legTop, layout.minZ, layout.maxX, layout.armTop(), layout.maxZ));
+        boxes.put(PlayerBodyParts.RIGHT_ARM, new Box(
+                layout.minX, layout.legTop, layout.minZ, layout.maxX, layout.armTop(), layout.maxZ));
 
-        // LEGS — full-width boxes for the leg Y band
-        boxes.put(PlayerBodyParts.LEFT_LEG,  new Box(minX, footTop, minZ, maxX, legTop, maxZ));
-        boxes.put(PlayerBodyParts.RIGHT_LEG, new Box(minX, footTop, minZ, maxX, legTop, maxZ));
+        boxes.put(PlayerBodyParts.LEFT_LEG, new Box(
+                layout.minX, layout.footTop, layout.minZ, layout.maxX, layout.legTop, layout.maxZ));
+        boxes.put(PlayerBodyParts.RIGHT_LEG, new Box(
+                layout.minX, layout.footTop, layout.minZ, layout.maxX, layout.legTop, layout.maxZ));
 
-        // FEET
-        boxes.put(PlayerBodyParts.LEFT_FOOT,  new Box(minX, minY, minZ, maxX, footTop, maxZ));
-        boxes.put(PlayerBodyParts.RIGHT_FOOT, new Box(minX, minY, minZ, maxX, footTop, maxZ));
+        boxes.put(PlayerBodyParts.LEFT_FOOT, new Box(
+                layout.minX, layout.minY, layout.minZ, layout.maxX, layout.footTop, layout.maxZ));
+        boxes.put(PlayerBodyParts.RIGHT_FOOT, new Box(
+                layout.minX, layout.minY, layout.minZ, layout.maxX, layout.footTop, layout.maxZ));
 
         return boxes;
+    }
+
+    /**
+     * Returns the point where the segment {@code [from, to]} enters the entity bounding box.
+     * If {@code to} is already inside the box it is returned directly.
+     */
+    public static Vec3d computeImpactPoint(LivingEntity entity, Vec3d from, Vec3d to) {
+        if (entity == null || from == null || to == null) {
+            return to;
+        }
+
+        Box box = entity.getBoundingBox().expand(0.05);
+        if (box.contains(to)) {
+            return to;
+        }
+        if (box.contains(from)) {
+            return from;
+        }
+
+        double t = rayBoxIntersect(from, to, box);
+        if (t < 0) {
+            return to;
+        }
+
+        return new Vec3d(
+                from.x + (to.x - from.x) * t,
+                from.y + (to.y - from.y) * t,
+                from.z + (to.z - from.z) * t
+        );
+    }
+
+    /**
+     * Resolves a body part from a world-space hit point using the entity's local
+     * yaw and height fractions. More reliable than axis-aligned AABB tests when
+     * the target is rotated.
+     */
+    public static Identifier pickLocal(LivingEntity entity, Vec3d point) {
+        if (entity == null || point == null) return null;
+
+        Box full = entity.getBoundingBox();
+        if (!full.expand(0.05).contains(point)) {
+            return null;
+        }
+
+        Layout layout = Layout.of(entity);
+        double height = full.maxY - full.minY;
+        if (height <= 1.0E-6) return null;
+
+        double yawRad = Math.toRadians(entity.getYaw());
+        double cos = Math.cos(yawRad);
+        double sin = Math.sin(yawRad);
+        double dx = point.x - entity.getX();
+        double dz = point.z - entity.getZ();
+        double localRight = dx * cos + dz * sin;
+        double halfW = entity.getWidth() * 0.5;
+        if (halfW <= 1.0E-6) return null;
+
+        double lateralFrac = Math.abs(localRight) / halfW;
+        boolean isRight = localRight >= 0.0;
+
+        if (layout.isHeadY(point.y)) {
+            return PlayerBodyParts.HEAD;
+        }
+        if (point.y >= layout.legTop) {
+            if (lateralFrac >= 0.40) {
+                return isRight ? PlayerBodyParts.RIGHT_ARM : PlayerBodyParts.LEFT_ARM;
+            }
+            return PlayerBodyParts.TORSO;
+        }
+        if (point.y >= layout.footTop) {
+            return isRight ? PlayerBodyParts.RIGHT_LEG : PlayerBodyParts.LEFT_LEG;
+        }
+        return isRight ? PlayerBodyParts.RIGHT_FOOT : PlayerBodyParts.LEFT_FOOT;
     }
 
     /**
@@ -100,16 +205,16 @@ public final class BodyHitboxes {
      * @param from    ray origin (e.g., previous projectile position)
      * @param to      ray end   (e.g., current projectile / hit position)
      */
-    public static Identifier pick(PlayerEntity player, Vec3d from, Vec3d to) {
-        Map<Identifier, Box> boxes = build(player);
+    public static Identifier pick(LivingEntity entity, Vec3d from, Vec3d to) {
+        Layout layout = Layout.of(entity);
+        Map<Identifier, Box> boxes = build(entity);
 
-        double yawRad = Math.toRadians(player.getYaw());
-        // right vector (player-local, horizontal)
+        double yawRad = Math.toRadians(entity.getYaw());
         double rtX = Math.cos(yawRad);
         double rtZ = Math.sin(yawRad);
 
-        double cx = (player.getBoundingBox().minX + player.getBoundingBox().maxX) * 0.5;
-        double cz = (player.getBoundingBox().minZ + player.getBoundingBox().maxZ) * 0.5;
+        double cx = layout.cx;
+        double cz = layout.cz;
 
         Identifier best = null;
         double bestT = Double.MAX_VALUE;
@@ -120,22 +225,30 @@ public final class BodyHitboxes {
             double t = rayBoxIntersect(from, to, box);
             if (t < 0 || t > bestT) continue;
 
-            // For paired parts, determine which side using the hit point dot-product
-            Identifier resolved = resolveSide(id, from, to, t, cx, cz, rtX, rtZ, player);
+            Identifier resolved = resolveSide(id, from, to, t, cx, cz, rtX, rtZ, entity);
             if (resolved != null) {
                 bestT = t;
                 best = resolved;
             }
         }
 
-        // If the ray origin was inside the bounding box, multiple boxes return t=0
-        // and the first in iteration order (HEAD) wins incorrectly.
-        // Use the hit point Y coordinate to pick the correct body-part band.
-        if (best != null && bestT <= 0.0) {
-            Identifier yPart = resolvePartFromY(to.y, player);
+        if (best == null) {
+            return null;
+        }
+
+        Vec3d hitPoint = new Vec3d(
+                from.x + (to.x - from.x) * bestT,
+                from.y + (to.y - from.y) * bestT,
+                from.z + (to.z - from.z) * bestT);
+
+        if (layout.isHeadY(hitPoint.y)) {
+            return PlayerBodyParts.HEAD;
+        }
+
+        if (bestT <= 0.0) {
+            Identifier yPart = resolvePartFromY(hitPoint.y, entity, layout);
             if (yPart != null) {
-                // Re-resolve left/right side using the hit point
-                Identifier sideResolved = resolveSideAtPoint(yPart, to, cx, cz, rtX, rtZ, player);
+                Identifier sideResolved = resolveSideAtPoint(yPart, hitPoint, cx, cz, rtX, rtZ, entity);
                 if (sideResolved != null) {
                     best = sideResolved;
                 }
@@ -152,43 +265,42 @@ public final class BodyHitboxes {
      * Uses strict containment first, then falls back to Y-band matching and
      * nearest-box distance to handle boundary edge cases.
      */
-    public static Identifier pickAtPoint(PlayerEntity player, Vec3d point) {
-        if (player == null || point == null) return null;
+    public static Identifier pickAtPoint(LivingEntity entity, Vec3d point) {
+        if (entity == null || point == null) return null;
 
-        Map<Identifier, Box> boxes = build(player);
-        double yawRad = Math.toRadians(player.getYaw());
+        Layout layout = Layout.of(entity);
+        if (layout.isHeadY(point.y)) {
+            return PlayerBodyParts.HEAD;
+        }
+
+        Map<Identifier, Box> boxes = build(entity);
+        double yawRad = Math.toRadians(entity.getYaw());
         double rtX = Math.cos(yawRad);
         double rtZ = Math.sin(yawRad);
-        double cx = (player.getBoundingBox().minX + player.getBoundingBox().maxX) * 0.5;
-        double cz = (player.getBoundingBox().minZ + player.getBoundingBox().maxZ) * 0.5;
+        double cx = layout.cx;
+        double cz = layout.cz;
 
-        // Priority order: lower limbs first to avoid false "head" on edge cases.
         Identifier[] order = new Identifier[] {
                 PlayerBodyParts.LEFT_FOOT, PlayerBodyParts.RIGHT_FOOT,
                 PlayerBodyParts.LEFT_LEG, PlayerBodyParts.RIGHT_LEG,
                 PlayerBodyParts.LEFT_ARM, PlayerBodyParts.RIGHT_ARM,
-                PlayerBodyParts.TORSO,
-                PlayerBodyParts.HEAD
+                PlayerBodyParts.TORSO
         };
 
-        // Phase 1: strict containment (original logic)
         for (Identifier id : order) {
             Box box = boxes.get(id);
             if (box == null || !box.contains(point)) continue;
 
-            Identifier resolved = resolveSideAtPoint(id, point, cx, cz, rtX, rtZ, player);
+            Identifier resolved = resolveSideAtPoint(id, point, cx, cz, rtX, rtZ, entity);
             if (resolved != null) return resolved;
         }
 
-        // Phase 2: Y-band fallback — determine body part from Y coordinate alone.
-        // This handles boundary cases where box.contains() fails due to strict inequalities.
-        Identifier yPart = resolvePartFromY(point.y, player);
+        Identifier yPart = resolvePartFromY(point.y, entity, layout);
         if (yPart != null) {
-            Identifier resolved = resolveSideAtPoint(yPart, point, cx, cz, rtX, rtZ, player);
+            Identifier resolved = resolveSideAtPoint(yPart, point, cx, cz, rtX, rtZ, entity);
             if (resolved != null) return resolved;
         }
 
-        // Phase 3: nearest-box fallback — find the closest box by squared distance
         Identifier nearest = null;
         double nearestDist = Double.MAX_VALUE;
         for (Identifier id : order) {
@@ -201,7 +313,7 @@ public final class BodyHitboxes {
             }
         }
         if (nearest != null) {
-            Identifier resolved = resolveSideAtPoint(nearest, point, cx, cz, rtX, rtZ, player);
+            Identifier resolved = resolveSideAtPoint(nearest, point, cx, cz, rtX, rtZ, entity);
             if (resolved != null) return resolved;
             return nearest;
         }
@@ -217,31 +329,17 @@ public final class BodyHitboxes {
      * Determines which body-part Y-band the given Y coordinate falls into.
      * Returns null if the Y is outside the player's bounding box entirely.
      */
-    private static Identifier resolvePartFromY(double y, PlayerEntity player) {
-        Box full = player.getBoundingBox();
-        double minY = full.minY;
-        double maxY = full.maxY;
-        double height = maxY - minY;
-        if (height <= 0) return null;
-
-        double footTop  = minY + height * 0.18;
-        double legTop   = minY + height * 0.50;
-        double armStart = minY + height * 0.50;
-        double armTop   = minY + height * 0.88;
-        double headBot  = minY + height * 0.88;
-
-        if (y >= headBot) return PlayerBodyParts.HEAD;
-        if (y >= armStart && y < armTop) {
-            // Arms and torso share this Y band; default to torso,
-            // side resolution will handle arm vs torso distinction
+    private static Identifier resolvePartFromY(double y, LivingEntity entity, Layout layout) {
+        if (layout.isHeadY(y)) {
+            return PlayerBodyParts.HEAD;
+        }
+        if (y >= layout.legTop && y < layout.neckY) {
             return PlayerBodyParts.TORSO;
         }
-        if (y >= footTop && y < legTop) {
-            // Leg band — return LEFT_LEG as placeholder, side resolution picks left/right
+        if (y >= layout.footTop && y < layout.legTop) {
             return PlayerBodyParts.LEFT_LEG;
         }
-        if (y < footTop) {
-            // Foot band
+        if (y < layout.footTop) {
             return PlayerBodyParts.LEFT_FOOT;
         }
         return null;
@@ -258,11 +356,11 @@ public final class BodyHitboxes {
             Identifier id, Vec3d point,
             double cx, double cz,
             double rtX, double rtZ,
-            PlayerEntity player) {
+            LivingEntity entity) {
 
         if (id.equals(PlayerBodyParts.LEFT_ARM) || id.equals(PlayerBodyParts.RIGHT_ARM)) {
             double dot = (point.x - cx) * rtX + (point.z - cz) * rtZ;
-            double halfW = (player.getBoundingBox().maxX - player.getBoundingBox().minX) * 0.5;
+            double halfW = (entity.getBoundingBox().maxX - entity.getBoundingBox().minX) * 0.5;
             if (Math.abs(dot) < halfW * 0.40) {
                 // Centre hit belongs to torso, not arm
                 return null;
@@ -356,7 +454,7 @@ public final class BodyHitboxes {
             Vec3d from, Vec3d to, double t,
             double cx, double cz,
             double rtX, double rtZ,
-            PlayerEntity player) {
+            LivingEntity entity) {
 
         boolean isPaired = id.equals(PlayerBodyParts.LEFT_ARM)
                 || id.equals(PlayerBodyParts.RIGHT_ARM)
@@ -381,7 +479,7 @@ public final class BodyHitboxes {
 
         if (id.equals(PlayerBodyParts.LEFT_ARM)  ||  id.equals(PlayerBodyParts.RIGHT_ARM)) {
             // Arm zone: also check that the hit is in the outer 40% laterally
-            double halfW = (player.getBoundingBox().maxX - player.getBoundingBox().minX) * 0.5;
+            double halfW = (entity.getBoundingBox().maxX - entity.getBoundingBox().minX) * 0.5;
             if (Math.abs(dot) < halfW * 0.40) {
                 // Hit the inner torso strip — don't claim as arm; return null to skip
                 return null;

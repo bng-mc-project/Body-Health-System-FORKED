@@ -17,6 +17,10 @@
 
   "itemGroup.bodyhealthsystem.general": "Body Health System",
 
+  "entity.bodyhealthsystem.body_test_dummy": "Body Hit Test Dummy",
+  "command.bodyhealthsystem.dummy.spawned": "Spawned body hit test dummy",
+  "command.bodyhealthsystem.dummy.needs_world": "Join a world before spawning the test dummy",
+
   "effect.bodyhealthsystem.morphine_effect": "Morphine",
   "effect.bodyhealthsystem.adrenaline_effect": "Adrenaline",
   "effect.bodyhealthsystem.dressing_effect": "Dressing Applied",

@@ -42,6 +42,18 @@ public final class ProjectileHitTracker {
     }
 
     /**
+     * Returns the last recorded part if it is recent enough, without removing it.
+     */
+    public static Identifier peekRecentPart(PlayerEntity player, int maxAgeTicks) {
+        if (player == null) return null;
+        PartHit hit = LAST_PART.get(player.getUuid());
+        if (hit == null) return null;
+        int age = player.age - hit.tick;
+        if (age < 0 || age > maxAgeTicks) return null;
+        return hit.partId;
+    }
+
+    /**
      * Consumes and returns the last recorded part if it is recent enough.
      * Prevents stale hits from being reused and allows non-standard damage sources
      * (e.g. custom gun mods) to still bind to a projectile hit event.
