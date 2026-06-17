@@ -5,19 +5,18 @@ import net.minecraft.enchantment.Enchantments;
 import net.minecraft.entity.DamageUtil;
 import net.minecraft.entity.damage.DamageSource;
 import net.minecraft.entity.damage.DamageTypes;
-import net.minecraft.entity.effect.StatusEffects;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.item.ArmorItem;
 import net.minecraft.registry.tag.DamageTypeTags;
-import net.minecraft.stat.Stats;
+import net.minecraft.util.Identifier;
 import net.minecraft.util.math.Vec3d;
+import xyz.srgnis.bodyhealthsystem.BHSMain;
 import xyz.srgnis.bodyhealthsystem.body.Body;
 import xyz.srgnis.bodyhealthsystem.body.BodyPart;
 import xyz.srgnis.bodyhealthsystem.body.BodySide;
 import xyz.srgnis.bodyhealthsystem.body.player.parts.*;
 import xyz.srgnis.bodyhealthsystem.config.Config;
-import xyz.srgnis.bodyhealthsystem.mixin.ModifyAppliedDamageInvoker;
-import xyz.srgnis.bodyhealthsystem.registry.ModStatusEffects;
+import xyz.srgnis.bodyhealthsystem.util.BhsDebugLog;
 import xyz.srgnis.bodyhealthsystem.util.ProjectileHitTracker;
 import xyz.srgnis.bodyhealthsystem.util.Utils;
 
@@ -41,6 +40,25 @@ public class PlayerBody extends Body {
         this.addPart(RIGHT_LEG, new LegBodyPart(BodySide.RIGHT,player));
         this.noCriticalParts.putAll(this.parts);
     }
+
+    /**
+     * Safely picks a random body part from noCriticalParts, falling back to all parts
+     * if noCriticalParts is empty (all parts destroyed). Returns null only if no parts
+     * exist at all (should never happen in practice).
+     */
+    private BodyPart pickRandomDamageablePart() {
+        java.util.ArrayList<BodyPart> available = getNoCriticalParts();
+        if (available.isEmpty()) {
+            available = getParts();
+            if (available.isEmpty()) {
+                BHSMain.LOGGER.warn("[BHS] No body parts available for damage application on {}",
+                        entity != null ? entity.getName().getString() : "unknown");
+                return null;
+            }
+        }
+        return available.get(entity.getRandom().nextInt(available.size()));
+    }
+
     //TODO: kill command don't kill;
     @Override
     public void applyDamageBySource(float amount, DamageSource source){
@@ -48,6 +66,25 @@ public class PlayerBody extends Body {
             super.applyDamageBySource(amount,source);
             return;
         }
+
+        // Diagnostic: log every damage source
+        try {
+            String typeName = source.getTypeRegistryEntry().getKey()
+                    .map(k -> k.getValue().toString()).orElse("unknown");
+            String srcCls = source.getSource() != null ? source.getSource().getClass().getName() : "null";
+            String atkCls = source.getAttacker() != null ? source.getAttacker().getClass().getName() : "null";
+            String name = entity != null ? entity.getName().getString() : "null";
+            BhsDebugLog.info("[BHS][DmgSrc] target={} amount={} type={} srcClass={} atkClass={}",
+                    name, String.format("%.3f", amount), typeName, srcCls, atkCls);
+        } catch (Exception e) {
+            BhsDebugLog.info("[BHS][DmgSrc] ERROR: {}", e.getMessage());
+        }
+
+        // Determine TACZ bullets by damage type namespace
+        boolean isTACZ = source.getTypeRegistryEntry().getKey()
+                .map(k -> "tacz".equals(k.getValue().getNamespace()))
+                .orElse(false);
+
         //TODO: handle more damage sources
         //TODO: starvation overpowered?
         if (source.isOf(DamageTypes.FALL) || source.isOf(DamageTypes.HOT_FLOOR) || source.isOf(DamageTypes.STALAGMITE)) {
@@ -56,42 +93,106 @@ public class PlayerBody extends Body {
             applyDamageFullRandom(amount, source);
         } else if (source.isOf(DamageTypes.FIREBALL)) {
             applyDamageFullRandom(amount, source);
-            // Fireballs are projectile-like: allow wounds.
-            BodyPart p = getNoCriticalParts().get(entity.getRandom().nextInt(getNoCriticalParts().size()));
-            if (bhs$canApplyWoundsFor(source, true)) applyWoundChances(p, true);
+            BodyPart p = pickRandomDamageablePart();
+            if (p != null && bhs$canApplyWoundsFor(source, true)) applyWoundChances(p, true);
         } else if (source.isOf(DamageTypes.STARVE)) {
             applyDamageLocal(amount, source, this.getPart(TORSO));
         } else if (source.isOf(DamageTypes.DROWN)) {
             applyDamageLocal(Config.drowningDamage, source, this.getPart(TORSO));
         } else if (source.isOf(DamageTypes.FLY_INTO_WALL) || source.isOf(DamageTypes.FALLING_ANVIL) || source.isOf(DamageTypes.FALLING_BLOCK) || source.isOf(DamageTypes.FALLING_STALACTITE)) {
             applyDamageLocal(amount, source, this.getPart(HEAD));
-        } else if (source.isOf(DamageTypes.ARROW) || source.isOf(DamageTypes.MOB_PROJECTILE) || source.isOf(DamageTypes.TRIDENT) || source.getSource() instanceof net.minecraft.entity.projectile.PersistentProjectileEntity) {
-            // Route projectile damage to the part indicated by the most recent hit
-            Vec3d norm = ProjectileHitTracker.getLastHit((PlayerEntity) entity);
-            BodyPart part = selectPartFromNormalized(norm);
-            if (part != null) {
-                // Head-hit mitigation: 40% chance to redirect to torso for arrows/tridents/mob projectiles
-                if (part.getIdentifier().equals(HEAD)) {
-                    var torso = getPart(TORSO);
-                    if (torso != null && entity.getRandom().nextDouble() < 0.40) {
-                        part = torso;
+        } else {
+            PlayerEntity player = (PlayerEntity) entity;
+            Identifier taczPart = null;
+
+            // --- TACZ bullet detection ---
+            if (isTACZ) {
+                taczPart = ProjectileHitTracker.peekRecentPart(player, 10);
+                boolean fromMixin = (taczPart != null);
+                if (taczPart == null) {
+                    net.minecraft.entity.Entity src = source.getSource();
+                    net.minecraft.entity.Entity attacker = source.getAttacker();
+                    if (src != null && attacker != null) {
+                        Vec3d from = attacker.getEyePos();
+                        Vec3d to = src.getPos();
+                        if (from.squaredDistanceTo(to) > 0.01) {
+                            taczPart = xyz.srgnis.bodyhealthsystem.util.BodyHitboxes.pick(player, from, to);
+                        }
+                        if (taczPart == null) {
+                            taczPart = xyz.srgnis.bodyhealthsystem.util.BodyHitboxes.pickAtPoint(player, to);
+                        }
                     }
                 }
+                if (taczPart != null) {
+                    ProjectileHitTracker.recordPart(player, taczPart);
+                }
+                BhsDebugLog.info("[BHS][TACZ] target={} part={} fromMixin={} damage={}",
+                        player.getName().getString(),
+                        taczPart != null ? taczPart.toString() : "null",
+                        fromMixin,
+                        String.format("%.3f", amount));
+            }
+
+            Identifier partId = (isTACZ && taczPart != null)
+                    ? taczPart
+                    : ProjectileHitTracker.consumeRecentPart(player, 3);
+            BodyPart part = (partId != null) ? getPart(partId) : null;
+            if (part != null) {
+                // If a limb is already destroyed, further hits to it are ignored.
+                if (isLimbPart(part.getIdentifier()) && part.getHealth() <= 0.0f) {
+                    BhsDebugLog.info("[BHS][ProjectileDamage] target={} part={} IGNORED (destroyed limb) damage={}",
+                            player.getName().getString(), part.getIdentifier(), String.format("%.3f", amount));
+                    if (isTACZ && bhs$isTaczFollowUpDamage(source)) {
+                        ProjectileHitTracker.clearPart(player);
+                    }
+                    return;
+                }
+
                 applyDamageLocal(amount, source, part);
                 if (bhs$canApplyWoundsFor(source, true)) applyWoundChances(part, true);
-            } else {
-                BodyPart p = getNoCriticalParts().get(entity.getRandom().nextInt(getNoCriticalParts().size()));
+                BhsDebugLog.info("[BHS][ProjectileDamage] target={} part={} damage={}",
+                        player.getName().getString(), part.getIdentifier(), String.format("%.3f", amount));
+                if (isTACZ && bhs$isTaczFollowUpDamage(source)) {
+                    ProjectileHitTracker.clearPart(player);
+                }
+            } else if (isTACZ
+                    || source.isOf(DamageTypes.ARROW)
+                    || source.isOf(DamageTypes.MOB_PROJECTILE)
+                    || source.isOf(DamageTypes.TRIDENT)
+                    || source.getSource() instanceof net.minecraft.entity.projectile.PersistentProjectileEntity
+                    || source.isIn(DamageTypeTags.IS_PROJECTILE)) {
+                // Projectile source but no matching recorded hit: fallback to random part.
+                BodyPart p = pickRandomDamageablePart();
+                if (p == null) return;
                 applyDamageLocal(amount, source, p);
                 if (bhs$canApplyWoundsFor(source, true)) applyWoundChances(p, true);
+                BhsDebugLog.warn("[BHS][ProjectileFallback] target={} part={} damage={}",
+                        player.getName().getString(), p.getIdentifier(), String.format("%.3f", amount));
+            } else {
+                BodyPart p = pickRandomDamageablePart();
+                if (p == null) return;
+                applyDamageLocal(amount, source, p);
+                if (bhs$canApplyWoundsFor(source, false)) applyWoundChances(p, false);
             }
-            // Clear after consumption to avoid stale data
-            ProjectileHitTracker.clear((PlayerEntity) entity);
-        } else {
-            BodyPart p = getNoCriticalParts().get(entity.getRandom().nextInt(getNoCriticalParts().size()));
-            applyDamageLocal(amount, source, p);
-            if (bhs$canApplyWoundsFor(source, false)) applyWoundChances(p, false);
         }
 
+    }
+
+    private static boolean isLimbPart(net.minecraft.util.Identifier id) {
+        return LEFT_ARM.equals(id)
+                || RIGHT_ARM.equals(id)
+                || LEFT_LEG.equals(id)
+                || RIGHT_LEG.equals(id)
+                || LEFT_FOOT.equals(id)
+                || RIGHT_FOOT.equals(id);
+    }
+
+    /** TACZ applies armor-piercing damage as a second hit right after the normal bullet hit. */
+    private static boolean bhs$isTaczFollowUpDamage(DamageSource source) {
+        return source.getTypeRegistryEntry().getKey()
+                .map(k -> "tacz".equals(k.getValue().getNamespace())
+                        && k.getValue().getPath().contains("ignore_armor"))
+                .orElse(false);
     }
 
     private boolean bhs$canApplyWoundsFor(DamageSource source, boolean projectile) {
@@ -204,26 +305,4 @@ public class PlayerBody extends Body {
         }
     }
 
-    private BodyPart selectPartFromNormalized(Vec3d norm) {
-        if (norm == null) return null;
-        double x = norm.x; 
-        double y = norm.y; 
-
-        if (y < 0.18) {
-            // Foot
-            return this.getPart(x >= 0 ? LEFT_FOOT : RIGHT_FOOT);
-        } else if (y < 0.50) {
-            // Leg
-            return this.getPart(x >= 0 ? LEFT_LEG : RIGHT_LEG);
-        } else if (y < 0.88) {
-            // Torso band. If very lateral in the upper torso, count it as an arm.
-            if (y >= 0.60 && Math.abs(x) > 0.80) {
-                return this.getPart(x >= 0 ? LEFT_ARM : RIGHT_ARM);
-            }
-            return this.getPart(TORSO);
-        } else {
-            // Head
-            return this.getPart(HEAD);
-        }
-    }
 }

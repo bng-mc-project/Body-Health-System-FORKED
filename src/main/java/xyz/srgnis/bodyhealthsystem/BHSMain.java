@@ -17,12 +17,14 @@ import org.lwjgl.glfw.GLFW;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import xyz.srgnis.bodyhealthsystem.command.DevCommands;
+import xyz.srgnis.bodyhealthsystem.compat.TaczCompat;
 import xyz.srgnis.bodyhealthsystem.config.Config;
 import xyz.srgnis.bodyhealthsystem.network.ServerNetworking;
 import xyz.srgnis.bodyhealthsystem.registry.ScreenHandlers;
 import xyz.srgnis.bodyhealthsystem.registry.ModItems;
 import xyz.srgnis.bodyhealthsystem.registry.ModStatusEffects;
 import xyz.srgnis.bodyhealthsystem.registry.ModBlocks;
+import xyz.srgnis.bodyhealthsystem.registry.ModEntities;
 
 // TemperatureAPI: block-based thermal effects
 import gavinx.temperatureapi.api.BlockThermalAPI;
@@ -59,8 +61,10 @@ public class BHSMain implements ModInitializer {
 
 		ServerNetworking.initialize();
 		DevCommands.initialize();
+		TaczCompat.register();
 		ModItems.registerItems();
 		ModBlocks.registerBlocks();
+		ModEntities.registerEntities();
 		ModStatusEffects.registerStatusEffects();
 		Config.init(MOD_ID, Config.class);
 

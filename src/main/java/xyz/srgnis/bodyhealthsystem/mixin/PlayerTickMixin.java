@@ -17,6 +17,7 @@ import xyz.srgnis.bodyhealthsystem.body.Body;
 import xyz.srgnis.bodyhealthsystem.body.BodyPart;
 import xyz.srgnis.bodyhealthsystem.body.player.BodyProvider;
 import xyz.srgnis.bodyhealthsystem.body.player.PlayerBodyParts;
+import xyz.srgnis.bodyhealthsystem.compat.TaczPoseCompat;
 import xyz.srgnis.bodyhealthsystem.config.Config;
 import xyz.srgnis.bodyhealthsystem.network.ServerNetworking;
 import xyz.srgnis.bodyhealthsystem.registry.ModStatusEffects;
@@ -106,8 +107,10 @@ public class PlayerTickMixin {
             if (player.isAlive()) {
                 if (player.getHealth() <= 0.0f && head != null && head.getHealth() > 0.0f && !body.isDowned()) {
                     body.startDowned();
-                    player.setHealth(1.0f);
-                    ServerNetworking.broadcastBody(player);
+                    if (Config.enableDownedSystem) {
+                        player.setHealth(1.0f);
+                        ServerNetworking.broadcastBody(player);
+                    }
                 }
             }
             body.tickDowned();
@@ -361,7 +364,7 @@ public class PlayerTickMixin {
             } else {
                 player.removeStatusEffect(StatusEffects.SLOWNESS);
             }
-        } else {
+        } else if (!TaczPoseCompat.hasForcedPose(player)) {
             if (player.getPose() == EntityPose.SWIMMING && !player.isTouchingWater()) {
                 net.minecraft.util.math.Box standingBox = player.getDimensions(EntityPose.STANDING).getBoxAt(player.getPos());
                 if (player.getWorld().isSpaceEmpty(player, standingBox)) {

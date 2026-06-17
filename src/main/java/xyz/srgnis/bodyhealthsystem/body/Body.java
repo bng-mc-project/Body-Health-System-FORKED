@@ -14,6 +14,7 @@ import net.minecraft.world.event.GameEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import xyz.srgnis.bodyhealthsystem.BHSMain;
+import xyz.srgnis.bodyhealthsystem.config.Config;
 import xyz.srgnis.bodyhealthsystem.mixin.ModifyAppliedDamageInvoker;
 import xyz.srgnis.bodyhealthsystem.registry.ModStatusEffects;
 import xyz.srgnis.bodyhealthsystem.util.Utils;
@@ -578,11 +579,14 @@ public abstract class Body {
             return;
         }
 
-        // If torso is destroyed, enter/maintain downed state instead of dying
+        // If torso is destroyed, enter downed state or die when the system is disabled
         if (torso != null && torso.getHealth() <= 0.0f) {
-            startDowned();
-            // Keep player barely alive while downed to allow revival
-            entity.setHealth(1.0f);
+            if (Config.enableDownedSystem) {
+                startDowned();
+                entity.setHealth(1.0f);
+            } else {
+                pendingDeath = true;
+            }
             return;
         }
 
@@ -598,8 +602,12 @@ public abstract class Body {
             float ratio = actual_health / max_effective;
             // If overall health is extremely low, enter downed state (head intact)
             if (ratio <= 0.01f) {
-                startDowned();
-                if (entity.getHealth() > 1.0f) entity.setHealth(1.0f);
+                if (Config.enableDownedSystem) {
+                    startDowned();
+                    if (entity.getHealth() > 1.0f) entity.setHealth(1.0f);
+                } else {
+                    pendingDeath = true;
+                }
                 return;
             }
             entity.setHealth(entity.getMaxHealth() * ratio);
@@ -657,7 +665,9 @@ public abstract class Body {
     }
 
     // Downed / revival helpers
-    public boolean isDowned() { return downed; }
+    public boolean isDowned() {
+        return Config.enableDownedSystem && downed;
+    }
     public boolean isBeingRevived() { return beingRevived; }
     // Client/server sync helpers
     public void setDowned(boolean downed) { this.downed = downed; }
@@ -683,6 +693,10 @@ public abstract class Body {
     }
 
     public void startDowned() {
+        if (!Config.enableDownedSystem) {
+            pendingDeath = true;
+            return;
+        }
         if (downed) return;
         downed = true;
         // Bleed-out time: 80s normally, 40s if torso bone is broken
@@ -714,7 +728,7 @@ public abstract class Body {
     }
 
     public void tickDowned() {
-        if (!downed) return;
+        if (!Config.enableDownedSystem || !downed) return;
         if (entity.getWorld().isClient) return;
         if (pendingDeath) return;
         if (!beingRevived) {

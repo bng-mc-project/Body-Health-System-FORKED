@@ -3,9 +3,14 @@ package xyz.srgnis.bodyhealthsystem;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
 import net.fabricmc.fabric.api.client.rendering.v1.ArmorRenderer;
+import net.fabricmc.fabric.api.client.rendering.v1.EntityRendererRegistry;
+import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderEvents;
 
 import xyz.srgnis.bodyhealthsystem.client.hud.BHSHud;
+import xyz.srgnis.bodyhealthsystem.client.render.BodyHitHighlightRenderer;
+import xyz.srgnis.bodyhealthsystem.client.render.BodyTestDummyEntityRenderer;
 import xyz.srgnis.bodyhealthsystem.network.ClientNetworking;
+import xyz.srgnis.bodyhealthsystem.registry.ModEntities;
 import xyz.srgnis.bodyhealthsystem.registry.Screens;
 import xyz.srgnis.bodyhealthsystem.client.input.GiveUpKeyHandler;
 import xyz.srgnis.bodyhealthsystem.client.screen.DownedOverlayController;
@@ -14,11 +19,15 @@ import xyz.srgnis.bodyhealthsystem.client.model.StrawHatModel;
 import xyz.srgnis.bodyhealthsystem.client.render.StrawHatArmorRenderer;
 import xyz.srgnis.bodyhealthsystem.registry.ModItems;
 import xyz.srgnis.bodyhealthsystem.client.item.ThermometerPredicates;
+import xyz.srgnis.bodyhealthsystem.command.DevClientCommands;
 
 public class BHSClient implements ClientModInitializer {
     @Override
     public void onInitializeClient() {
+        DevClientCommands.initialize();
         HudRenderCallback.EVENT.register(new BHSHud());
+        WorldRenderEvents.LAST.register(BodyHitHighlightRenderer::render);
+        EntityRendererRegistry.register(ModEntities.BODY_TEST_DUMMY, BodyTestDummyEntityRenderer::new);
         ClientNetworking.initialize();
         Screens.registerScreens();
         GiveUpKeyHandler.initClient();

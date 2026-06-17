@@ -6,6 +6,7 @@ import net.minecraft.registry.tag.DamageTypeTags;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.ModifyVariable;
+import xyz.srgnis.bodyhealthsystem.util.BhsDebugLog;
 import xyz.srgnis.bodyhealthsystem.body.Body;
 import xyz.srgnis.bodyhealthsystem.body.player.BodyProvider;
 import xyz.srgnis.bodyhealthsystem.network.ServerNetworking;
@@ -20,6 +21,17 @@ public class OnApplyDamage {
     //NOTE: The method signature is needed to be able to access the source parameter.
     @ModifyVariable(method = "applyDamage(Lnet/minecraft/entity/damage/DamageSource;F)V", at = @At("HEAD"), ordinal = 0, argsOnly = true)
     public float handleHealthChange(float amount, DamageSource source) {
+        // === FIXED: log HERE, in the mixin, BEFORE anything else ===
+        // This mixin IS confirmed to fire for TACZ (from the original crash stack trace).
+        // If this log doesn't appear, the JAR is stale.
+        try {
+            String typeName = source.getTypeRegistryEntry().getKey()
+                    .map(k -> k.getValue().toString()).orElse("unknown");
+            String name = ((PlayerEntity)(Object)this).getName().getString();
+            BhsDebugLog.info("[BHS][MixinHit] target={} amount={} type={}",
+                    name, String.format("%.3f", amount), typeName);
+        } catch (Exception ignored) {}
+
         if(source.isIn(DamageTypeTags.BYPASSES_INVULNERABILITY)){
             //If is out of world (/kill) just return the damage to kill the player
             return amount;

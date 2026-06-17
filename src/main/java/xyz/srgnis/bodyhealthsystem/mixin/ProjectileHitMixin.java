@@ -1,113 +1,58 @@
 package xyz.srgnis.bodyhealthsystem.mixin;
 
 import net.minecraft.entity.Entity;
-import net.minecraft.entity.player.PlayerEntity;
+import net.minecraft.entity.LivingEntity;
 import net.minecraft.entity.projectile.PersistentProjectileEntity;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.text.Text;
+import net.minecraft.util.Identifier;
 import net.minecraft.util.hit.EntityHitResult;
-import net.minecraft.util.math.Box;
 import net.minecraft.util.math.Vec3d;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
-import xyz.srgnis.bodyhealthsystem.util.ProjectileHitTracker;
-import net.minecraft.util.hit.HitResult;   
+import xyz.srgnis.bodyhealthsystem.entity.BodyHitHighlightTarget;
+import xyz.srgnis.bodyhealthsystem.util.BodyProjectileHits;
 
 @Mixin(PersistentProjectileEntity.class)
 public class ProjectileHitMixin {
-    private static final double ARM_X_THRESHOLD = 0.80; 
 
     @Inject(method = "onEntityHit", at = @At("HEAD"))
     private void bhs$recordHit(EntityHitResult entityHitResult, CallbackInfo ci) {
-        Entity self = (Entity)(Object)this;
         if (entityHitResult == null) return;
         Entity hitEntity = entityHitResult.getEntity();
-        if (!(hitEntity instanceof PlayerEntity player)) return;
-        if (player.getWorld().isClient) return;
+        if (!(hitEntity instanceof LivingEntity living)) return;
+        if (!(living instanceof BodyHitHighlightTarget) && !(living instanceof net.minecraft.entity.player.PlayerEntity)) return;
+        if (living.getWorld().isClient) return;
 
-        // --- Build candidate hit position ---
-        Vec3d hitPos = entityHitResult.getPos();
-        Vec3d projPos = self.getPos();
-        Box box = player.getBoundingBox();
+        PersistentProjectileEntity projectile = (PersistentProjectileEntity) (Object) this;
+        Vec3d to = projectile.getPos();
+        Vec3d prev = new Vec3d(projectile.prevX, projectile.prevY, projectile.prevZ);
+        Vec3d from = prev.squaredDistanceTo(to) > 1.0E-6 ? prev : bhs$rayStart(projectile, to);
+        Vec3d impact = BodyProjectileHits.resolveImpactPoint(living, from, to);
 
-        double centerX = (box.minX + box.maxX) * 0.5;
-        double centerZ = (box.minZ + box.maxZ) * 0.5;
+        Identifier part = BodyProjectileHits.resolvePart(living, impact, from, to, false);
+        BodyProjectileHits.recordHit(living, part, "vanilla", impact);
+    }
 
-        double distHit = horizontalDistance(hitPos, centerX, centerZ);
-        double distProj = horizontalDistance(projPos, centerX, centerZ);
-
-        Vec3d best = (distProj > distHit) ? projPos : hitPos;
-
-        double py = clamp(best.y, box.minY, box.maxY);
-        Vec3d adjustedHit = new Vec3d(best.x, py, best.z);
-
-        Vec3d origin = new Vec3d(centerX, py, centerZ);
-        Vec3d offset = adjustedHit.subtract(origin);
-
-        // Pose-accurate dimensions based on the current bounding box and eye position
-        double height = Math.max(box.maxY - box.minY, 1.0E-3);
-        double halfWidth = Math.max(player.getWidth() * 0.5, 1.0E-3);
-
-        double yawRad = Math.toRadians(player.getBodyYaw());
-        Vec3d forward = new Vec3d(-Math.sin(yawRad), 0.0, Math.cos(yawRad)).normalize();
-        Vec3d right = new Vec3d(forward.z, 0.0, -forward.x).normalize();
-
-        double localX = offset.dotProduct(right);
-        double localZ = offset.dotProduct(forward);
-
-        double xNorm = clamp(localX / halfWidth, -1.0, 1.0);
-
-        // Compute raw normalized height and align the head band start with the player's current eye height
-        double yRaw = clamp((py - box.minY) / height, 0.0, 1.0);
-        double headStart = clamp((player.getEyeY() - box.minY) / height, 0.0, 1.0);
-        headStart = Math.min(headStart, 0.99); // avoid division by zero in extreme cases
-        final double HEAD_BAND_START = 0.88; // where our classification expects the head to begin
-        double yNorm;
-        if (yRaw <= headStart) {
-            yNorm = (headStart > 1.0E-6) ? (yRaw / headStart) * HEAD_BAND_START : 0.0;
-        } else {
-            yNorm = HEAD_BAND_START + ((yRaw - headStart) / (1.0 - headStart)) * (1.0 - HEAD_BAND_START);
+    private static Vec3d bhs$rayStart(PersistentProjectileEntity projectile, Vec3d hitPos) {
+        Entity owner = projectile.getOwner();
+        if (owner instanceof LivingEntity shooter) {
+            return shooter.getEyePos();
         }
-        yNorm = clamp(yNorm, 0.0, 1.0);
-
-        double zNorm = clamp(localZ / halfWidth, -1.0, 1.0);
-
-        ProjectileHitTracker.record(player, xNorm, yNorm, zNorm);
-
-      //  String bodyPart = classifyBodyPart(xNorm, yNorm);
-       // if (player instanceof ServerPlayerEntity serverPlayer) {
-           // serverPlayer.sendMessage(Text.literal(String.format(
-               // "BHS-hit x=%.3f y=%.3f z=%.3f -> %s | best=(%.2f,%.2f,%.2f) offset=(%.3f,%.3f,%.3f) yaw=%.1f",
-              //  xNorm, yNorm, zNorm, bodyPart,
-              //  best.x, best.y, best.z,
-              //  offset.x, offset.y, offset.z,
-               // player.getBodyYaw()
-           // )), false);
-        //}
-    }
-
-    private static String classifyBodyPart(double xNorm, double yNorm) {
-        String side = "";
-        if (xNorm < -0.25) side = "Right ";
-        else if (xNorm > 0.25) side = "Left ";
-        if (yNorm < 0.18) return side + "Foot";
-        if (yNorm < 0.50) return side + "Leg";
-        if (yNorm < 0.88) {
-            if (yNorm >= 0.60 && Math.abs(xNorm) > ARM_X_THRESHOLD) return side + "Arm";
-            return "Torso";
+        if (owner != null) {
+            return owner.getPos();
         }
-        return side + "Head";
-    }
 
-    private static double horizontalDistance(Vec3d v, double cx, double cz) {
-        double dx = v.x - cx;
-        double dz = v.z - cz;
-        return Math.sqrt(dx * dx + dz * dz);
-    }
+        Vec3d velocity = projectile.getVelocity();
+        if (velocity.lengthSquared() > 1.0E-6) {
+            return hitPos.subtract(velocity.normalize().multiply(2.0));
+        }
 
-    private static double clamp(double v, double min, double max) {
-        return Math.max(min, Math.min(max, v));
+        Vec3d previous = new Vec3d(projectile.prevX, projectile.prevY, projectile.prevZ);
+        if (previous.squaredDistanceTo(hitPos) > 1.0E-6) {
+            return previous;
+        }
+
+        return hitPos.add(0.0, 0.5, 0.0);
     }
 }

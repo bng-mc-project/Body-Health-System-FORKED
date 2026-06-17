@@ -1,33 +1,72 @@
-# gradle
-
-.gradle/
+```
+# Compiled and build artifacts
+*.class
+*.o
+*.obj
+*.out
 build/
-out/
-classes/
+target/
+run/
+run-tacz/
+bin/
 
-# eclipse
+# Dependencies
+.gradle/
+libs/
+lib/
 
-*.launch
+# Logs and temp files
+*.log
+*.tmp
+*.swp
 
-# idea
-
+# Editors
+.vscode/
 .idea/
 *.iml
 *.ipr
 *.iws
 
-# vscode
+# System files
+.DS_Store
+Thumbs.db
 
-.settings/
-.vscode/
-bin/
-.classpath
-.project
+# Environment
+.env
+.env.local
+*.env.*
 
-# macos
+# Coverage
+coverage/
+htmlcov/
+.coverage
 
-*.DS_Store
+# MyPy
+.mypy_cache/
+# PyTest
+.pytest_cache/
 
-# fabric
-
-run/
+# Compression
+*.zip
+*.gz
+*.tar
+*.tgz
+*.bz2
+*.xz
+*.7z
+*.rar
+*.zst
+*.lz4
+*.lzh
+*.cab
+*.arj
+*.rpm
+*.deb
+*.Z
+*.lz
+*.lzo
+*.tar.gz
+*.tar.bz2
+*.tar.xz
+*.tar.zst
+```
