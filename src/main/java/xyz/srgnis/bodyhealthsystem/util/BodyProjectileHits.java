@@ -5,9 +5,9 @@ import net.minecraft.entity.LivingEntity;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.math.Vec3d;
-import xyz.srgnis.bodyhealthsystem.BHSMain;
 import xyz.srgnis.bodyhealthsystem.body.player.PlayerBodyParts;
 import xyz.srgnis.bodyhealthsystem.entity.BodyHitHighlightTarget;
+import xyz.srgnis.bodyhealthsystem.util.BhsDebugLog;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -69,7 +69,7 @@ public final class BodyProjectileHits {
             ProjectileHitTracker.recordPart(player, part);
         }
 
-        BHSMain.LOGGER.info(
+        BhsDebugLog.info(
                 "[BHS][ProjectileHit] type={} target={} hitPos=({},{},{}) part={}",
                 projectileType,
                 hitEntity.getName().getString(),

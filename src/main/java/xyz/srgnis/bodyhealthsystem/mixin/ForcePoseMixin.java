@@ -9,6 +9,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import xyz.srgnis.bodyhealthsystem.body.Body;
 import xyz.srgnis.bodyhealthsystem.body.player.BodyProvider;
 import xyz.srgnis.bodyhealthsystem.body.player.PlayerBody;
+import xyz.srgnis.bodyhealthsystem.compat.TaczPoseCompat;
 
 /**
  * Ensure the crawling/downed pose is applied consistently on both server and client
@@ -20,6 +21,9 @@ public abstract class ForcePoseMixin {
     @Inject(method = "updatePose", at = @At("TAIL"))
     private void bhs$forceCrawlOrDownedPose(CallbackInfo ci) {
         PlayerEntity player = (PlayerEntity) (Object) this;
+        if (TaczPoseCompat.hasForcedPose(player)) {
+            return;
+        }
         if (!(player instanceof BodyProvider)) return;
         Body body = ((BodyProvider) player).getBody();
         if (body == null) return;

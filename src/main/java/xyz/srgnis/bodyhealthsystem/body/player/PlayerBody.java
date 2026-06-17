@@ -16,6 +16,7 @@ import xyz.srgnis.bodyhealthsystem.body.BodyPart;
 import xyz.srgnis.bodyhealthsystem.body.BodySide;
 import xyz.srgnis.bodyhealthsystem.body.player.parts.*;
 import xyz.srgnis.bodyhealthsystem.config.Config;
+import xyz.srgnis.bodyhealthsystem.util.BhsDebugLog;
 import xyz.srgnis.bodyhealthsystem.util.ProjectileHitTracker;
 import xyz.srgnis.bodyhealthsystem.util.Utils;
 
@@ -73,10 +74,10 @@ public class PlayerBody extends Body {
             String srcCls = source.getSource() != null ? source.getSource().getClass().getName() : "null";
             String atkCls = source.getAttacker() != null ? source.getAttacker().getClass().getName() : "null";
             String name = entity != null ? entity.getName().getString() : "null";
-            BHSMain.LOGGER.info("[BHS][DmgSrc] target={} amount={} type={} srcClass={} atkClass={}",
+            BhsDebugLog.info("[BHS][DmgSrc] target={} amount={} type={} srcClass={} atkClass={}",
                     name, String.format("%.3f", amount), typeName, srcCls, atkCls);
         } catch (Exception e) {
-            BHSMain.LOGGER.error("[BHS][DmgSrc] ERROR: {}", e.getMessage());
+            BhsDebugLog.info("[BHS][DmgSrc] ERROR: {}", e.getMessage());
         }
 
         // Determine TACZ bullets by damage type namespace
@@ -125,7 +126,7 @@ public class PlayerBody extends Body {
                 if (taczPart != null) {
                     ProjectileHitTracker.recordPart(player, taczPart);
                 }
-                BHSMain.LOGGER.info("[BHS][TACZ] target={} part={} fromMixin={} damage={}",
+                BhsDebugLog.info("[BHS][TACZ] target={} part={} fromMixin={} damage={}",
                         player.getName().getString(),
                         taczPart != null ? taczPart.toString() : "null",
                         fromMixin,
@@ -139,7 +140,7 @@ public class PlayerBody extends Body {
             if (part != null) {
                 // If a limb is already destroyed, further hits to it are ignored.
                 if (isLimbPart(part.getIdentifier()) && part.getHealth() <= 0.0f) {
-                    BHSMain.LOGGER.info("[BHS][ProjectileDamage] target={} part={} IGNORED (destroyed limb) damage={}",
+                    BhsDebugLog.info("[BHS][ProjectileDamage] target={} part={} IGNORED (destroyed limb) damage={}",
                             player.getName().getString(), part.getIdentifier(), String.format("%.3f", amount));
                     if (isTACZ && bhs$isTaczFollowUpDamage(source)) {
                         ProjectileHitTracker.clearPart(player);
@@ -149,7 +150,7 @@ public class PlayerBody extends Body {
 
                 applyDamageLocal(amount, source, part);
                 if (bhs$canApplyWoundsFor(source, true)) applyWoundChances(part, true);
-                BHSMain.LOGGER.info("[BHS][ProjectileDamage] target={} part={} damage={}",
+                BhsDebugLog.info("[BHS][ProjectileDamage] target={} part={} damage={}",
                         player.getName().getString(), part.getIdentifier(), String.format("%.3f", amount));
                 if (isTACZ && bhs$isTaczFollowUpDamage(source)) {
                     ProjectileHitTracker.clearPart(player);
@@ -165,7 +166,7 @@ public class PlayerBody extends Body {
                 if (p == null) return;
                 applyDamageLocal(amount, source, p);
                 if (bhs$canApplyWoundsFor(source, true)) applyWoundChances(p, true);
-                BHSMain.LOGGER.warn("[BHS][ProjectileFallback] target={} part={} damage={}",
+                BhsDebugLog.warn("[BHS][ProjectileFallback] target={} part={} damage={}",
                         player.getName().getString(), p.getIdentifier(), String.format("%.3f", amount));
             } else {
                 BodyPart p = pickRandomDamageablePart();

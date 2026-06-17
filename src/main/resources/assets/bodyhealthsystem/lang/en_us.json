@@ -98,6 +98,8 @@
   "bodyhealthsystem.midnightconfig.BoneHealChance": "Sleep bone heal base chance",
   "bodyhealthsystem.midnightconfig.BoneHealDailyIncrease": "Sleep bone heal daily increase",
   "bodyhealthsystem.midnightconfig.enableBoneSystem": "Enable Bone System",
+  "bodyhealthsystem.midnightconfig.enableDownedSystem": "Enable Downed / Revival System",
+  "bodyhealthsystem.midnightconfig.debugProjectileHitboxes": "Log Projectile Hits (debug)",
   "bodyhealthsystem.midnightconfig.showInventoryBodyHud": "Show body HUD in inventory",
 
   "button.bodyhealthsystem.give_up": "Give Up",

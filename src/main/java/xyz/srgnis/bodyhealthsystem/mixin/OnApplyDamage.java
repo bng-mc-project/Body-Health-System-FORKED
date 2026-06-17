@@ -6,7 +6,7 @@ import net.minecraft.registry.tag.DamageTypeTags;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.ModifyVariable;
-import xyz.srgnis.bodyhealthsystem.BHSMain;
+import xyz.srgnis.bodyhealthsystem.util.BhsDebugLog;
 import xyz.srgnis.bodyhealthsystem.body.Body;
 import xyz.srgnis.bodyhealthsystem.body.player.BodyProvider;
 import xyz.srgnis.bodyhealthsystem.network.ServerNetworking;
@@ -28,7 +28,7 @@ public class OnApplyDamage {
             String typeName = source.getTypeRegistryEntry().getKey()
                     .map(k -> k.getValue().toString()).orElse("unknown");
             String name = ((PlayerEntity)(Object)this).getName().getString();
-            BHSMain.LOGGER.info("[BHS][MixinHit] target={} amount={} type={}",
+            BhsDebugLog.info("[BHS][MixinHit] target={} amount={} type={}",
                     name, String.format("%.3f", amount), typeName);
         } catch (Exception ignored) {}
 
